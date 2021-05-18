@@ -513,12 +513,12 @@ func getMessageBytesToSign(msg *models.WebhookData) []byte {
 
 // buildNotificationStringToSign builds message of Notification type
 func buildNotificationStringToSign(msg *models.WebhookData) string {
-	b, _ := json.Marshal(msg.Message)
-	message := string(b)
+	//b, _ := json.Marshal(msg.Message)
+	//message := string(b)
 
 	var stringToSign string
 	stringToSign = "Message\n"
-	stringToSign += message + "\n"
+	stringToSign += buildJsonMessageStringToSign(msg) + "\n"
 	stringToSign += "MessageId\n"
 	stringToSign += msg.MessageId + "\n"
 	if msg.Subject != "" {
@@ -551,6 +551,20 @@ func buildSubscriptionStringToSign(msg *models.WebhookData) string {
 	stringToSign += msg.TopicArn + "\n"
 	stringToSign += "Type\n"
 	stringToSign += msg.Type + "\n"
+	return stringToSign
+}
+
+func buildJsonMessageStringToSign(msg *models.WebhookData) string {
+	message, ok := msg.Message.(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	stringToSign := ""
+	for key, _ := range message {
+		stringToSign += fmt.Sprintf("\"%v\"\n", key)
+		stringToSign = fmt.Sprintf("\"%v\"\n", message[key])
+	}
 	return stringToSign
 }
 
