@@ -1,8 +1,8 @@
 package tests
 
 import (
-	"github.com/sh0umik/bd-payment-gateway/bkash"
-	"github.com/sh0umik/bd-payment-gateway/bkash/models"
+	"github.com/TariqueNasrullah/bd-payment-gateway/bkash"
+	"github.com/TariqueNasrullah/bd-payment-gateway/bkash/models"
 	"os"
 	"testing"
 )

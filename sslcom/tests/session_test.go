@@ -1,8 +1,8 @@
 package tests
 
 import (
-	"github.com/sh0umik/bd-payment-gateway/sslcom"
-	models2 "github.com/sh0umik/bd-payment-gateway/sslcom/models"
+	"github.com/TariqueNasrullah/bd-payment-gateway/sslcom"
+	models2 "github.com/TariqueNasrullah/bd-payment-gateway/sslcom/models"
 	"os"
 	"testing"
 )
@@ -43,7 +43,7 @@ func TestCreateSession(t *testing.T) {
 		MultiCardName:    []string{"bkash"},
 		ValueA:           "706633169",
 		ValueB:           "288580",
-		ValueC: 		  "3",
+		ValueC:           "3",
 	}
 
 	sessionResponse, err := paymentService.CreateSession(sessionRequest, false)

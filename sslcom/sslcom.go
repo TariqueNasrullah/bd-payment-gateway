@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/sh0umik/bd-payment-gateway/sslcom/models"
+	"github.com/TariqueNasrullah/bd-payment-gateway/sslcom/models"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -74,7 +74,7 @@ func (s *SslCommerz) CreateSession(req *models.RequestValue, isLiveStore bool) (
 	var storeUrl string
 	if isLiveStore {
 		storeUrl = LIVE_GATEWAY
-	}else {
+	} else {
 		storeUrl = SANDBOX_GATEWAY
 	}
 	u, _ := url.ParseRequestURI(storeUrl)
@@ -277,7 +277,7 @@ func (s *SslCommerz) OrderValidation(ipnValId string, isLiveStore bool) (*models
 	var storeUrl string
 	if isLiveStore {
 		storeUrl = LIVE_GATEWAY
-	}else {
+	} else {
 		storeUrl = SANDBOX_GATEWAY
 	}
 	u, _ := url.ParseRequestURI(storeUrl)
@@ -330,7 +330,7 @@ func (s *SslCommerz) CheckValidation(request *models.OrderValidationRequest, isL
 	var storeUrl string
 	if isLiveStore {
 		storeUrl = LIVE_GATEWAY
-	}else {
+	} else {
 		storeUrl = SANDBOX_GATEWAY
 	}
 	u, _ := url.ParseRequestURI(storeUrl)
@@ -377,7 +377,7 @@ func (s *SslCommerz) TransactionQueryByTID(request *models.TransactionQueryReque
 	var storeUrl string
 	if isLiveStore {
 		storeUrl = LIVE_GATEWAY
-	}else {
+	} else {
 		storeUrl = SANDBOX_GATEWAY
 	}
 	u, _ := url.ParseRequestURI(storeUrl)
@@ -426,7 +426,7 @@ func (s *SslCommerz) TransactionQueryBySID(request *models.TransactionQueryReque
 	var storeUrl string
 	if isLiveStore {
 		storeUrl = LIVE_GATEWAY
-	}else {
+	} else {
 		storeUrl = SANDBOX_GATEWAY
 	}
 	u, _ := url.ParseRequestURI(storeUrl)
@@ -477,7 +477,7 @@ func (s *SslCommerz) InitiateRefunding(request *models.RefundApiRequest, isLiveS
 	var storeUrl string
 	if isLiveStore {
 		storeUrl = LIVE_GATEWAY
-	}else {
+	} else {
 		storeUrl = SANDBOX_GATEWAY
 	}
 	u, _ := url.ParseRequestURI(storeUrl)

@@ -8,7 +8,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"github.com/sh0umik/bd-payment-gateway/bkash/models"
+	"github.com/TariqueNasrullah/bd-payment-gateway/bkash/models"
 	"io/ioutil"
 	"net/http"
 	"net/url"
