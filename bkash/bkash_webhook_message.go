@@ -1,4 +1,4 @@
-package models
+package bkash
 
 type BkashIPNPayload struct {
 	Type             string `json:"Type,omitempty"`

@@ -1,4 +1,4 @@
-package models
+package bkash
 
 type RefundTransactionResponse struct {
 	CompletedTime     string `json:"completedTime,omitempty"`

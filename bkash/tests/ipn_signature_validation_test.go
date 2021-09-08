@@ -3,7 +3,6 @@ package tests
 import (
 	"encoding/json"
 	"github.com/sh0umik/bd-payment-gateway/bkash"
-	"github.com/sh0umik/bd-payment-gateway/bkash/models"
 	"testing"
 )
 
@@ -23,7 +22,7 @@ func TestMessageSignatureValidation(t *testing.T) {
 	  "SubscribeURL": "",
 	  "Subject": ""
 	}`
-	var notificationPayload models.BkashIPNPayload
+	var notificationPayload bkash.BkashIPNPayload
 
 	err := json.Unmarshal([]byte(notificationJson), &notificationPayload)
 	if err != nil {

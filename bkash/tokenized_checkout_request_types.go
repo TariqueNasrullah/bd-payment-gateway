@@ -1,4 +1,4 @@
-package models
+package bkash
 
 type CreateAgreementRequest struct {
 	Mode                  string `json:"mode,omitempty"`

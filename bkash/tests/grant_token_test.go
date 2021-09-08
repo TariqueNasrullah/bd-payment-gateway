@@ -2,7 +2,6 @@ package tests
 
 import (
 	"github.com/sh0umik/bd-payment-gateway/bkash"
-	"github.com/sh0umik/bd-payment-gateway/bkash/models"
 	"os"
 	"testing"
 )
@@ -14,7 +13,7 @@ func TestGrantToken(t *testing.T) {
 	appSecret := os.Getenv("BKASH_APP_SECRET")
 
 	bkashService := bkash.GetBkash(username, password, appKey, appSecret)
-	paymentService := bkash.BkashTokenizedCheckoutService(bkashService)
+	paymentService := bkash.TokenizedCheckoutService(bkashService)
 
 	token, err := paymentService.GrantToken(false)
 	if err != nil {
@@ -34,7 +33,7 @@ func TestBkashJourney(t *testing.T) {
 	appSecret := os.Getenv("BKASH_APP_SECRET")
 
 	bkashService := bkash.GetBkash(username, password, appKey, appSecret)
-	paymentService := bkash.BkashTokenizedCheckoutService(bkashService)
+	paymentService := bkash.TokenizedCheckoutService(bkashService)
 
 	token, err := paymentService.GrantToken(false)
 	if err != nil {
@@ -45,7 +44,7 @@ func TestBkashJourney(t *testing.T) {
 		t.Fatalf("StatusCode: %v, Status Message: %v\n", token.StatusCode, token.StatusMessage)
 	}
 
-	queryPaymentRes, err := paymentService.QueryPayment(&models.QueryPaymentRequest{PaymentID: "TR0001541629364022912"}, token, false)
+	queryPaymentRes, err := paymentService.QueryPayment(&bkash.QueryPaymentRequest{PaymentID: "TR0001541629364022912"}, token, false)
 	if err != nil {
 		t.Fatal(err)
 	}

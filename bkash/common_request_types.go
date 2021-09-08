@@ -1,4 +1,4 @@
-package models
+package bkash
 
 type RefundTransactionRequest struct {
 	PaymentID string `json:"paymentID,omitempty"`

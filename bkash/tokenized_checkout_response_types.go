@@ -1,4 +1,4 @@
-package models
+package bkash
 
 // Response models for TOKENIZED CHECKOUT
 

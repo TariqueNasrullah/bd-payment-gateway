@@ -2,7 +2,6 @@ package tests
 
 import (
 	"github.com/sh0umik/bd-payment-gateway/bkash"
-	"github.com/sh0umik/bd-payment-gateway/bkash/models"
 	"os"
 	"testing"
 )
@@ -14,7 +13,7 @@ func TestAgreement(t *testing.T) {
 	appSecret := os.Getenv("BKASH_APP_SECRET")
 
 	bkashService := bkash.GetBkash(username, password, appKey, appSecret)
-	paymentService := bkash.BkashTokenizedCheckoutService(bkashService)
+	paymentService := bkash.TokenizedCheckoutService(bkashService)
 
 	token, err := paymentService.GrantToken(false)
 	if err != nil {
@@ -25,9 +24,9 @@ func TestAgreement(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var createAgreementResponse *models.CreateAgreementResponse
+	var createAgreementResponse *bkash.CreateAgreementResponse
 	t.Run("test CreateAgreement", func(t *testing.T) {
-		req := &models.CreateAgreementRequest{
+		req := &bkash.CreateAgreementRequest{
 			Mode:           "0000",
 			PayerReference: "dsfsodjf-w3y2sdjf83493-sdhfis",
 			CallbackUrl:    "https://api.shikho.net/payment",
@@ -48,9 +47,9 @@ func TestAgreement(t *testing.T) {
 		createAgreementResponse = resp
 	})
 
-	var executeAgreementReponse *models.ExecuteAgreementResponse
+	var executeAgreementReponse *bkash.ExecuteAgreementResponse
 	t.Run("test ExecuteAgreement", func(t *testing.T) {
-		req := &models.ExecuteAgreementRequest{
+		req := &bkash.ExecuteAgreementRequest{
 			PaymentID: createAgreementResponse.PaymentID,
 		}
 		resp, err := paymentService.ExecuteAgreement(req, token, false)
@@ -67,9 +66,9 @@ func TestAgreement(t *testing.T) {
 		executeAgreementReponse = resp
 	})
 
-	var createPaymentResponse *models.CreatePaymentResponse
+	var createPaymentResponse *bkash.CreatePaymentResponse
 	t.Run("test CreatePayment", func(t *testing.T) {
-		req := &models.CreatePaymentRequest{
+		req := &bkash.CreatePaymentRequest{
 			Mode:                    "0001",
 			PayerReference:          "01723888888",
 			CallbackURL:             "https://shikho.tech/payment",
@@ -95,7 +94,7 @@ func TestAgreement(t *testing.T) {
 	})
 
 	t.Run("test executePayment", func(t *testing.T) {
-		req := &models.ExecutePaymentRequest{
+		req := &bkash.ExecutePaymentRequest{
 			PaymentID: createPaymentResponse.PaymentID,
 		}
 		resp, err := paymentService.ExecutePayment(req, token, false)
