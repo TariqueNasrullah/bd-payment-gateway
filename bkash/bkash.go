@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"strconv"
 	"sync"
+	"time"
 )
 
 const (
@@ -39,6 +40,8 @@ type Bkash struct {
 	mu    sync.Mutex
 	token *Token
 
+	httpClient *http.Client
+
 	isLive bool
 }
 
@@ -47,13 +50,22 @@ func GetBkash(username, password, appKey, appSecret string, isLive bool) (Tokeni
 	if err != nil {
 		return nil, err
 	}
+
+	client := &http.Client{
+		Timeout: time.Second * 10,
+	}
+
 	return &Bkash{
 		Username:  username,
 		Password:  password,
 		AppKey:    appKey,
 		AppSecret: appSecret,
-		token:     token,
-		isLive:    isLive,
+
+		token: token,
+
+		httpClient: client,
+
+		isLive: isLive,
 	}, nil
 }
 
