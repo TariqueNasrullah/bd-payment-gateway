@@ -2,20 +2,6 @@ package bkash
 
 // Response models for TOKENIZED CHECKOUT
 
-type BkashError struct {
-	ErrorCode    string `json:"errorCode,omitempty"`
-	ErrorMessage string `json:"errorMessage,omitempty"`
-}
-
-type Token struct {
-	TokenType     string `json:"token_type,omitempty"`
-	ExpiresIn     int    `json:"expires_in,omitempty"`
-	IdToken       string `json:"id_token,omitempty"`
-	RefreshToken  string `json:"refresh_token,omitempty"`
-	StatusCode    string `json:"statusCode,omitempty"`
-	StatusMessage string `json:"statusMessage,omitempty"`
-}
-
 type CreateAgreementResponse struct {
 	PaymentID            string `json:"paymentID,omitempty"`
 	BkashURL             string `json:"bkashURL,omitempty"`

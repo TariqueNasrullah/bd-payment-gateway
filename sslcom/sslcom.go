@@ -74,7 +74,7 @@ func (s *SslCommerz) CreateSession(req *models.RequestValue, isLiveStore bool) (
 	var storeUrl string
 	if isLiveStore {
 		storeUrl = LIVE_GATEWAY
-	}else {
+	} else {
 		storeUrl = SANDBOX_GATEWAY
 	}
 	u, _ := url.ParseRequestURI(storeUrl)
@@ -227,7 +227,7 @@ func (s *SslCommerz) IPNListener(request *http.Request) (*models.IpnResponse, er
 		Add the store_passwd and your store password value with verify_key
 		Example: Now the verify_key (after adding store_passwd): key1,key3,key2,key5,key4,store_passwd
 		Example: value of verify_key (after the serialized): key1,key2,key3,key4,key5,store_passwd
-		Make a string by combining the parameters' key and value. Example: key1=value1&key2=value2&key3=value3&key4=value4&key5=value5&store_passwd=Your Store Password
+		Make a string by combining the parameters' key and value. Example: key1=value1&key2=value2&key3=value3&key4=value4&key5=value5&store_passwd=Your Store password
 		Generate md5 hash of the value and match with verify_sign
 	*/ /*
 
@@ -277,7 +277,7 @@ func (s *SslCommerz) OrderValidation(ipnValId string, isLiveStore bool) (*models
 	var storeUrl string
 	if isLiveStore {
 		storeUrl = LIVE_GATEWAY
-	}else {
+	} else {
 		storeUrl = SANDBOX_GATEWAY
 	}
 	u, _ := url.ParseRequestURI(storeUrl)
@@ -330,7 +330,7 @@ func (s *SslCommerz) CheckValidation(request *models.OrderValidationRequest, isL
 	var storeUrl string
 	if isLiveStore {
 		storeUrl = LIVE_GATEWAY
-	}else {
+	} else {
 		storeUrl = SANDBOX_GATEWAY
 	}
 	u, _ := url.ParseRequestURI(storeUrl)
@@ -377,7 +377,7 @@ func (s *SslCommerz) TransactionQueryByTID(request *models.TransactionQueryReque
 	var storeUrl string
 	if isLiveStore {
 		storeUrl = LIVE_GATEWAY
-	}else {
+	} else {
 		storeUrl = SANDBOX_GATEWAY
 	}
 	u, _ := url.ParseRequestURI(storeUrl)
@@ -426,7 +426,7 @@ func (s *SslCommerz) TransactionQueryBySID(request *models.TransactionQueryReque
 	var storeUrl string
 	if isLiveStore {
 		storeUrl = LIVE_GATEWAY
-	}else {
+	} else {
 		storeUrl = SANDBOX_GATEWAY
 	}
 	u, _ := url.ParseRequestURI(storeUrl)
@@ -477,7 +477,7 @@ func (s *SslCommerz) InitiateRefunding(request *models.RefundApiRequest, isLiveS
 	var storeUrl string
 	if isLiveStore {
 		storeUrl = LIVE_GATEWAY
-	}else {
+	} else {
 		storeUrl = SANDBOX_GATEWAY
 	}
 	u, _ := url.ParseRequestURI(storeUrl)

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"reflect"
 	"strconv"
+	"sync"
 )
 
 const (
@@ -29,41 +30,46 @@ const (
 	queryPaymentUri     = "/tokenized/checkout/payment/status"
 )
 
-var EmptyRequiredField = errors.New("empty required field")
-
 type Bkash struct {
 	Username  string
 	Password  string
 	AppKey    string
 	AppSecret string
+
+	mu    sync.Mutex
+	token *Token
+
+	isLive bool
 }
 
-func GetBkash(username, password, appKey, appSecret string) *Bkash {
+func GetBkash(username, password, appKey, appSecret string, isLive bool) (TokenizedCheckoutService, error) {
+	token, err := grantToken(username, password, appKey, appSecret, isLive)
+	if err != nil {
+		return nil, err
+	}
 	return &Bkash{
 		Username:  username,
 		Password:  password,
 		AppKey:    appKey,
 		AppSecret: appSecret,
-	}
+		token:     token,
+		isLive:    isLive,
+	}, nil
 }
 
-func (b *Bkash) GrantToken(isLiveStore bool) (*Token, error) {
-	// Mandatory field validation
-	if b.AppKey == "" || b.AppSecret == "" || b.Username == "" || b.Password == "" {
-		return nil, EmptyRequiredField
-	}
-
+func grantToken(username, password, appKey, appSecret string, isLive bool) (*Token, error) {
 	var data = make(map[string]string)
 
-	data["app_key"] = b.AppKey
-	data["app_secret"] = b.AppSecret
+	data["app_key"] = appKey
+	data["app_secret"] = appSecret
 
 	var storeUrl string
-	if isLiveStore {
+	if isLive {
 		storeUrl = liveGateway
 	} else {
 		storeUrl = sandboxGateway
 	}
+
 	u, _ := url.ParseRequestURI(storeUrl)
 	u.Path += grantTokenUri
 
@@ -82,8 +88,8 @@ func (b *Bkash) GrantToken(isLiveStore bool) (*Token, error) {
 
 	r.Header.Add("Content-Type", "application/json")
 	r.Header.Add("Content-Length", strconv.Itoa(len(jsonData)))
-	r.Header.Add("username", b.Username)
-	r.Header.Add("password", b.Password)
+	r.Header.Add("username", username)
+	r.Header.Add("password", password)
 
 	response, err := client.Do(r)
 	if err != nil {
@@ -95,29 +101,49 @@ func (b *Bkash) GrantToken(isLiveStore bool) (*Token, error) {
 		return nil, err
 	}
 
-	var resp Token
-	err = json.Unmarshal(body, &resp)
+	var tj tokenJSON
+	err = json.Unmarshal(body, &tj)
 	if err != nil {
 		return nil, err
 	}
 
-	return &resp, nil
+	if tj.StatusCode != "0000" {
+		return nil, gatewayError{
+			StatusCode:    tj.StatusCode,
+			StatusMessage: tj.StatusMessage,
+		}
+	}
+
+	return &Token{
+		TokenType:    tj.TokenType,
+		ExpiresIn:    tj.expiry(),
+		IdToken:      tj.IdToken,
+		RefreshToken: tj.RefreshToken,
+	}, nil
 }
 
-func (b *Bkash) RefreshToken(token *Token, isLiveStore bool) (*Token, error) {
-	// Mandatory field validation
-	if b.AppKey == "" || b.AppSecret == "" || token.RefreshToken == "" || b.Username == "" || b.Password == "" {
-		return nil, EmptyRequiredField
+func (b *Bkash) getToken() (*Token, error) {
+	if !b.token.Valid() {
+		if err := b.refreshToken(); err != nil {
+			return nil, err
+		}
 	}
+
+	return b.token, nil
+}
+
+func (b *Bkash) refreshToken() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
 	var data = make(map[string]string)
 
 	data["app_key"] = b.AppKey
 	data["app_secret"] = b.AppSecret
-	data["refresh_token"] = token.RefreshToken
+	data["refresh_token"] = b.token.RefreshToken
 
 	var storeUrl string
-	if isLiveStore {
+	if b.isLive {
 		storeUrl = liveGateway
 	} else {
 		storeUrl = sandboxGateway
@@ -129,13 +155,13 @@ func (b *Bkash) RefreshToken(token *Token, isLiveStore bool) (*Token, error) {
 
 	jsonData, err := json.Marshal(data)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	client := &http.Client{}
 	r, err := http.NewRequest("POST", refreshTokenURL, bytes.NewReader(jsonData))
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	r.Header.Add("Content-Type", "application/json")
@@ -145,43 +171,52 @@ func (b *Bkash) RefreshToken(token *Token, isLiveStore bool) (*Token, error) {
 
 	response, err := client.Do(r)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	body, err := ioutil.ReadAll(response.Body)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	var resp Token
-	err = json.Unmarshal(body, &resp)
+	var tj tokenJSON
+	err = json.Unmarshal(body, &tj)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return &resp, nil
+	if tj.StatusCode != "0000" {
+		return gatewayError{
+			StatusCode:    tj.StatusCode,
+			StatusMessage: tj.StatusMessage,
+		}
+	}
+
+	tkn := &Token{
+		TokenType:    tj.TokenType,
+		ExpiresIn:    tj.expiry(),
+		IdToken:      tj.IdToken,
+		RefreshToken: tj.RefreshToken,
+	}
+	b.token = tkn
+
+	return nil
 }
 
-func (b *Bkash) CreateAgreement(request *CreateAgreementRequest, token *Token, isLiveStore bool) (*CreateAgreementResponse, error) {
-	// Mandatory field validation
-	if b.AppKey == "" || token.IdToken == "" || request.Mode == "" || request.CallbackUrl == "" {
-		return nil, EmptyRequiredField
-	}
-
+func (b *Bkash) CreateAgreement(request *CreateAgreementRequest) (*CreateAgreementResponse, error) {
 	// Mode validation
 	if request.Mode != "0000" {
 		return nil, errors.New("invalid mode value")
 	}
 
 	var storeUrl string
-	if isLiveStore {
+	if b.isLive {
 		storeUrl = liveGateway
 	} else {
 		storeUrl = sandboxGateway
 	}
 	u, _ := url.ParseRequestURI(storeUrl)
 	u.Path += createAgreementUri
-	//u.RawQuery = data.Encode()
 
 	createAgreementURL := u.String()
 
@@ -196,9 +231,14 @@ func (b *Bkash) CreateAgreement(request *CreateAgreementRequest, token *Token, i
 		return nil, err
 	}
 
+	tkn, err := b.getToken()
+	if err != nil {
+		return nil, err
+	}
+
 	r.Header.Add("Content-Type", "application/json")
 	r.Header.Add("Content-Length", strconv.Itoa(len(jsonData)))
-	r.Header.Add("Authorization", fmt.Sprintf("%s %s", token.TokenType, token.IdToken))
+	r.Header.Add("Authorization", fmt.Sprintf("%s %s", tkn.TokenType, tkn.IdToken))
 	r.Header.Add("X-APP-Key", b.AppKey)
 
 	response, err := client.Do(r)
@@ -217,9 +257,18 @@ func (b *Bkash) CreateAgreement(request *CreateAgreementRequest, token *Token, i
 		return nil, err
 	}
 
+	if resp.StatusCode != "0000" {
+		return nil, gatewayError{
+			StatusCode:    resp.StatusCode,
+			StatusMessage: resp.StatusMessage,
+		}
+	}
+
 	return &resp, nil
 }
 
+// Deprecated: CreateAgreementValidationListener id deprecated, and should not be used.
+// Future release will drop the func.
 func (b *Bkash) CreateAgreementValidationListener(r *http.Request) (*CreateAgreementValidationResponse, error) {
 	if r.Method != "POST" {
 		return nil, errors.New("method not allowed")
@@ -235,14 +284,9 @@ func (b *Bkash) CreateAgreementValidationListener(r *http.Request) (*CreateAgree
 	return &agreementTValidationResponse, nil
 }
 
-func (b *Bkash) ExecuteAgreement(request *ExecuteAgreementRequest, token *Token, isLiveStore bool) (*ExecuteAgreementResponse, error) {
-	// Mandatory field validation
-	if b.AppKey == "" || token.IdToken == "" || request.PaymentID == "" {
-		return nil, EmptyRequiredField
-	}
-
+func (b *Bkash) ExecuteAgreement(request *ExecuteAgreementRequest) (*ExecuteAgreementResponse, error) {
 	var storeUrl string
-	if isLiveStore {
+	if b.isLive {
 		storeUrl = liveGateway
 	} else {
 		storeUrl = sandboxGateway
@@ -264,9 +308,14 @@ func (b *Bkash) ExecuteAgreement(request *ExecuteAgreementRequest, token *Token,
 		return nil, err
 	}
 
+	tkn, err := b.getToken()
+	if err != nil {
+		return nil, err
+	}
+
 	r.Header.Add("Content-Type", "application/json")
 	r.Header.Add("Content-Length", strconv.Itoa(len(jsonData)))
-	r.Header.Add("Authorization", fmt.Sprintf("%s %s", token.TokenType, token.IdToken))
+	r.Header.Add("Authorization", fmt.Sprintf("%s %s", tkn.TokenType, tkn.IdToken))
 	r.Header.Add("X-APP-Key", b.AppKey)
 
 	response, err := client.Do(r)
@@ -285,17 +334,19 @@ func (b *Bkash) ExecuteAgreement(request *ExecuteAgreementRequest, token *Token,
 		return nil, err
 	}
 
+	if resp.StatusCode != "0000" {
+		return nil, gatewayError{
+			StatusCode:    resp.StatusCode,
+			StatusMessage: resp.StatusMessage,
+		}
+	}
+
 	return &resp, nil
 }
 
-func (b *Bkash) QueryAgreement(request *QueryAgreementRequest, token *Token, isLiveStore bool) (*QueryAgreementResponse, error) {
-	// Mandatory field validation
-	if b.AppKey == "" || token.IdToken == "" || request.AgreementID == "" {
-		return nil, EmptyRequiredField
-	}
-
+func (b *Bkash) QueryAgreement(request *QueryAgreementRequest) (*QueryAgreementResponse, error) {
 	var storeUrl string
-	if isLiveStore {
+	if b.isLive {
 		storeUrl = liveGateway
 	} else {
 		storeUrl = sandboxGateway
@@ -317,9 +368,14 @@ func (b *Bkash) QueryAgreement(request *QueryAgreementRequest, token *Token, isL
 		return nil, err
 	}
 
+	tkn, err := b.getToken()
+	if err != nil {
+		return nil, err
+	}
+
 	r.Header.Add("Content-Type", "application/json")
 	r.Header.Add("Content-Length", strconv.Itoa(len(jsonData)))
-	r.Header.Add("Authorization", fmt.Sprintf("%s %s", token.TokenType, token.IdToken))
+	r.Header.Add("Authorization", fmt.Sprintf("%s %s", tkn.TokenType, tkn.IdToken))
 	r.Header.Add("X-APP-Key", b.AppKey)
 
 	response, err := client.Do(r)
@@ -338,17 +394,19 @@ func (b *Bkash) QueryAgreement(request *QueryAgreementRequest, token *Token, isL
 		return nil, err
 	}
 
+	if resp.StatusCode != "0000" {
+		return nil, gatewayError{
+			StatusCode:    resp.StatusCode,
+			StatusMessage: resp.StatusMessage,
+		}
+	}
+
 	return &resp, nil
 }
 
-func (b *Bkash) CancelAgreement(request *CancelAgreementRequest, token *Token, isLiveStore bool) (*CancelAgreementResponse, error) {
-	// Mandatory field validation
-	if b.AppKey == "" || token.IdToken == "" || request.AgreementID == "" {
-		return nil, EmptyRequiredField
-	}
-
+func (b *Bkash) CancelAgreement(request *CancelAgreementRequest) (*CancelAgreementResponse, error) {
 	var storeUrl string
-	if isLiveStore {
+	if b.isLive {
 		storeUrl = liveGateway
 	} else {
 		storeUrl = sandboxGateway
@@ -370,9 +428,14 @@ func (b *Bkash) CancelAgreement(request *CancelAgreementRequest, token *Token, i
 		return nil, err
 	}
 
+	tkn, err := b.getToken()
+	if err != nil {
+		return nil, err
+	}
+
 	r.Header.Add("Content-Type", "application/json")
 	r.Header.Add("Content-Length", strconv.Itoa(len(jsonData)))
-	r.Header.Add("Authorization", fmt.Sprintf("%s %s", token.TokenType, token.IdToken))
+	r.Header.Add("Authorization", fmt.Sprintf("%s %s", tkn.TokenType, tkn.IdToken))
 	r.Header.Add("X-APP-Key", b.AppKey)
 
 	response, err := client.Do(r)
@@ -391,22 +454,24 @@ func (b *Bkash) CancelAgreement(request *CancelAgreementRequest, token *Token, i
 		return nil, err
 	}
 
+	if resp.StatusCode != "0000" {
+		return nil, gatewayError{
+			StatusCode:    resp.StatusCode,
+			StatusMessage: resp.StatusMessage,
+		}
+	}
+
 	return &resp, nil
 }
 
-func (b *Bkash) CreatePayment(request *CreatePaymentRequest, token *Token, isLiveStore bool) (*CreatePaymentResponse, error) {
-	// Mandatory field validation
-	if b.AppKey == "" || token.IdToken == "" || request.Mode == "" || request.CallbackURL == "" {
-		return nil, EmptyRequiredField
-	}
-
+func (b *Bkash) CreatePayment(request *CreatePaymentRequest) (*CreatePaymentResponse, error) {
 	// Mode validation
 	if request.Mode != "0001" {
 		return nil, errors.New("invalid mode value")
 	}
 
 	var storeUrl string
-	if isLiveStore {
+	if b.isLive {
 		storeUrl = liveGateway
 	} else {
 		storeUrl = sandboxGateway
@@ -427,9 +492,14 @@ func (b *Bkash) CreatePayment(request *CreatePaymentRequest, token *Token, isLiv
 		return nil, err
 	}
 
+	tkn, err := b.getToken()
+	if err != nil {
+		return nil, err
+	}
+
 	r.Header.Add("Content-Type", "application/json")
 	r.Header.Add("Content-Length", strconv.Itoa(len(jsonData)))
-	r.Header.Add("Authorization", fmt.Sprintf("%s %s", token.TokenType, token.IdToken))
+	r.Header.Add("Authorization", fmt.Sprintf("%s %s", tkn.TokenType, tkn.IdToken))
 	r.Header.Add("X-APP-Key", b.AppKey)
 
 	response, err := client.Do(r)
@@ -448,17 +518,19 @@ func (b *Bkash) CreatePayment(request *CreatePaymentRequest, token *Token, isLiv
 		return nil, err
 	}
 
+	if resp.StatusCode != "0000" {
+		return nil, gatewayError{
+			StatusCode:    resp.StatusCode,
+			StatusMessage: resp.StatusMessage,
+		}
+	}
+
 	return &resp, nil
 }
 
-func (b *Bkash) ExecutePayment(request *ExecutePaymentRequest, token *Token, isLiveStore bool) (*ExecutePaymentResponse, error) {
-	// Mandatory field validation
-	if b.AppKey == "" || token.IdToken == "" || request.PaymentID == "" {
-		return nil, EmptyRequiredField
-	}
-
+func (b *Bkash) ExecutePayment(request *ExecutePaymentRequest) (*ExecutePaymentResponse, error) {
 	var storeUrl string
-	if isLiveStore {
+	if b.isLive {
 		storeUrl = liveGateway
 	} else {
 		storeUrl = sandboxGateway
@@ -479,9 +551,14 @@ func (b *Bkash) ExecutePayment(request *ExecutePaymentRequest, token *Token, isL
 		return nil, err
 	}
 
+	tkn, err := b.getToken()
+	if err != nil {
+		return nil, err
+	}
+
 	r.Header.Add("Content-Type", "application/json")
 	r.Header.Add("Content-Length", strconv.Itoa(len(jsonData)))
-	r.Header.Add("Authorization", fmt.Sprintf("%s %s", token.TokenType, token.IdToken))
+	r.Header.Add("Authorization", fmt.Sprintf("%s %s", tkn.TokenType, tkn.IdToken))
 	r.Header.Add("X-APP-Key", b.AppKey)
 
 	response, err := client.Do(r)
@@ -500,17 +577,19 @@ func (b *Bkash) ExecutePayment(request *ExecutePaymentRequest, token *Token, isL
 		return nil, err
 	}
 
+	if resp.StatusCode != "0000" {
+		return nil, gatewayError{
+			StatusCode:    resp.StatusCode,
+			StatusMessage: resp.StatusMessage,
+		}
+	}
+
 	return &resp, nil
 }
 
-func (b *Bkash) QueryPayment(request *QueryPaymentRequest, token *Token, isLiveStore bool) (*QueryPaymentResponse, error) {
-	// Mandatory field validation
-	if b.AppKey == "" || token.IdToken == "" || request.PaymentID == "" {
-		return nil, EmptyRequiredField
-	}
-
+func (b *Bkash) QueryPayment(request *QueryPaymentRequest) (*QueryPaymentResponse, error) {
 	var storeUrl string
-	if isLiveStore {
+	if b.isLive {
 		storeUrl = liveGateway
 	} else {
 		storeUrl = sandboxGateway
@@ -532,9 +611,14 @@ func (b *Bkash) QueryPayment(request *QueryPaymentRequest, token *Token, isLiveS
 		return nil, err
 	}
 
+	tkn, err := b.getToken()
+	if err != nil {
+		return nil, err
+	}
+
 	r.Header.Add("Content-Type", "application/json")
 	r.Header.Add("Content-Length", strconv.Itoa(len(jsonData)))
-	r.Header.Add("Authorization", fmt.Sprintf("%s %s", token.TokenType, token.IdToken))
+	r.Header.Add("Authorization", fmt.Sprintf("%s %s", tkn.TokenType, tkn.IdToken))
 	r.Header.Add("X-APP-Key", b.AppKey)
 
 	response, err := client.Do(r)
@@ -551,6 +635,13 @@ func (b *Bkash) QueryPayment(request *QueryPaymentRequest, token *Token, isLiveS
 	err = json.Unmarshal(body, &resp)
 	if err != nil {
 		return nil, err
+	}
+
+	if resp.StatusCode != "0000" {
+		return nil, gatewayError{
+			StatusCode:    resp.StatusCode,
+			StatusMessage: resp.StatusMessage,
+		}
 	}
 
 	return &resp, nil
