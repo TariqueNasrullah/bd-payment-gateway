@@ -2,119 +2,323 @@ package bkash
 
 import (
 	"bytes"
-	"crypto/x509"
-	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
+	"github.com/sirupsen/logrus"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"net/url"
-	"reflect"
-	"strconv"
 	"sync"
 	"time"
 )
 
 const (
-	sandboxGateway      = "https://tokenized.sandbox.bka.sh/v1.2.0-beta"
-	liveGateway         = "https://tokenized.pay.bka.sh"
-	grantTokenUri       = "/tokenized/checkout/token/grant"
-	refreshTokenUri     = "/tokenized/checkout/token/refresh"
-	createAgreementUri  = "/tokenized/checkout/create"
-	executeAgreementUri = "/tokenized/checkout/execute"
-	queryAgreementUri   = "/tokenized/checkout/agreement/status"
-	cancelAgreementUri  = "/tokenized/checkout/agreement/cancel"
-	createPaymentUri    = "/tokenized/checkout/create"
-	executePaymentUri   = "/tokenized/checkout/execute"
-	queryPaymentUri     = "/tokenized/checkout/payment/status"
+	sandboxGateway       = "https://tokenized.sandbox.bka.sh/v1.2.0-beta"
+	liveGateway          = "https://tokenized.pay.bka.sh"
+	grantTokenUri        = "/tokenized/checkout/token/grant"
+	refreshTokenUri      = "/tokenized/checkout/token/refresh"
+	createAgreementUri   = "/tokenized/checkout/create"
+	executeAgreementUri  = "/tokenized/checkout/execute"
+	queryAgreementUri    = "/tokenized/checkout/agreement/status"
+	cancelAgreementUri   = "/tokenized/checkout/agreement/cancel"
+	createPaymentUri     = "/tokenized/checkout/create"
+	executePaymentUri    = "/tokenized/checkout/execute"
+	queryPaymentUri      = "/tokenized/checkout/payment/status"
+	searchTransactionUri = "/tokenized/checkout/general/searchTransaction"
 )
 
-type Bkash struct {
+type Config struct {
 	Username  string
 	Password  string
 	AppKey    string
 	AppSecret string
+
+	HttpClient *http.Client
+
+	Logger *logrus.Logger
+
+	IsLive bool
+}
+
+type Bkash struct {
+	username  string
+	password  string
+	appKey    string
+	appSecret string
 
 	mu    sync.Mutex
 	token *Token
 
 	httpClient *http.Client
 
+	logger *logrus.Logger
+
 	isLive bool
 }
 
-func GetBkash(username, password, appKey, appSecret string, isLive bool) (TokenizedCheckoutService, error) {
-	token, err := grantToken(username, password, appKey, appSecret, isLive)
-	if err != nil {
-		return nil, err
+func GetBkashTokenizedCheckoutService(conf *Config) (TokenizedCheckoutService, error) {
+	client := conf.HttpClient
+	if client == nil {
+		client = &http.Client{
+			Timeout: time.Second * 10,
+		}
 	}
 
-	client := &http.Client{
-		Timeout: time.Second * 10,
-	}
+	bkash := &Bkash{
+		username:  conf.Username,
+		password:  conf.Password,
+		appKey:    conf.AppKey,
+		appSecret: conf.AppSecret,
 
-	return &Bkash{
-		Username:  username,
-		Password:  password,
-		AppKey:    appKey,
-		AppSecret: appSecret,
-
-		token: token,
+		token: nil,
 
 		httpClient: client,
 
-		isLive: isLive,
-	}, nil
+		logger: conf.Logger,
+
+		isLive: conf.IsLive,
+	}
+
+	token, err := bkash.grantToken()
+	if err != nil {
+		return nil, err
+	}
+
+	bkash.token = token
+
+	return bkash, nil
 }
 
-func grantToken(username, password, appKey, appSecret string, isLive bool) (*Token, error) {
+func (b *Bkash) CreateAgreement(request *CreateAgreementRequest) (*CreateAgreementResponse, error) {
+	// Mode validation
+	if request.Mode != "0000" {
+		return nil, errors.New("invalid mode value")
+	}
+
+	createAgreementURL := b.getURL(createAgreementUri)
+
+	r, err := b.newHttpRequestWithAuthorization("POST", createAgreementURL, request)
+
+	resp := &createAgreementResponseJSON{}
+
+	err = b.sendRequestToAPI(r, resp)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != "0000" {
+		return nil, gatewayError{
+			StatusCode:    resp.StatusCode,
+			StatusMessage: resp.StatusMessage,
+		}
+	}
+
+	return &resp.CreateAgreementResponse, nil
+}
+
+func (b *Bkash) ExecuteAgreement(request *ExecuteAgreementRequest) (*ExecuteAgreementResponse, error) {
+	executeAgreementURL := b.getURL(executeAgreementUri)
+
+	r, err := b.newHttpRequestWithAuthorization("POST", executeAgreementURL, request)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &executeAgreementResponseJSON{}
+
+	err = b.sendRequestToAPI(r, resp)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != "0000" {
+		return nil, gatewayError{
+			StatusCode:    resp.StatusCode,
+			StatusMessage: resp.StatusMessage,
+		}
+	}
+
+	return &resp.ExecuteAgreementResponse, nil
+}
+
+func (b *Bkash) QueryAgreement(request *QueryAgreementRequest) (*QueryAgreementResponse, error) {
+	queryAgreementURL := b.getURL(queryAgreementUri)
+
+	r, err := b.newHttpRequestWithAuthorization("POST", queryAgreementURL, request)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &queryAgreementResponseJSON{}
+
+	err = b.sendRequestToAPI(r, resp)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != "0000" {
+		return nil, gatewayError{
+			StatusCode:    resp.StatusCode,
+			StatusMessage: resp.StatusMessage,
+		}
+	}
+
+	return &resp.QueryAgreementResponse, nil
+}
+
+func (b *Bkash) CancelAgreement(request *CancelAgreementRequest) (*CancelAgreementResponse, error) {
+	cancelAgreementURL := b.getURL(cancelAgreementUri)
+
+	r, err := b.newHttpRequestWithAuthorization("POST", cancelAgreementURL, request)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &cancelAgreementResponseJSON{}
+
+	err = b.sendRequestToAPI(r, resp)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != "0000" {
+		return nil, gatewayError{
+			StatusCode:    resp.StatusCode,
+			StatusMessage: resp.StatusMessage,
+		}
+	}
+
+	return &resp.CancelAgreementResponse, nil
+}
+
+func (b *Bkash) CreatePayment(request *CreatePaymentRequest) (*CreatePaymentResponse, error) {
+	// Mode validation
+	if request.Mode != "0001" {
+		return nil, errors.New("invalid mode value")
+	}
+
+	createPaymentURL := b.getURL(createPaymentUri)
+
+	r, err := b.newHttpRequestWithAuthorization("POST", createPaymentURL, request)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &createPaymentResponseJSON{}
+
+	err = b.sendRequestToAPI(r, resp)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != "0000" {
+		return nil, gatewayError{
+			StatusCode:    resp.StatusCode,
+			StatusMessage: resp.StatusMessage,
+		}
+	}
+
+	return &resp.CreatePaymentResponse, nil
+}
+
+func (b *Bkash) ExecutePayment(request *ExecutePaymentRequest) (*ExecutePaymentResponse, error) {
+	executePayment := b.getURL(executePaymentUri)
+
+	r, err := b.newHttpRequestWithAuthorization("POST", executePayment, request)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &executePaymentResponseJSON{}
+
+	err = b.sendRequestToAPI(r, resp)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != "0000" {
+		return nil, gatewayError{
+			StatusCode:    resp.StatusCode,
+			StatusMessage: resp.StatusMessage,
+		}
+	}
+
+	return &resp.ExecutePaymentResponse, nil
+}
+
+func (b *Bkash) QueryPayment(request *QueryPaymentRequest) (*QueryPaymentResponse, error) {
+	queryPaymentURL := b.getURL(queryPaymentUri)
+
+	r, err := b.newHttpRequestWithAuthorization("POST", queryPaymentURL, request)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &queryPaymentResponseJSON{}
+
+	err = b.sendRequestToAPI(r, resp)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != "0000" {
+		return nil, gatewayError{
+			StatusCode:    resp.StatusCode,
+			StatusMessage: resp.StatusMessage,
+		}
+	}
+
+	return &resp.QueryPaymentResponse, nil
+}
+
+func (b *Bkash) SearchTransaction(request *SearchTransactionRequest) (*SearchTransactionResponse, error) {
+	searchTransactionURL := b.getURL(searchTransactionUri)
+
+	r, err := b.newHttpRequestWithAuthorization("POST", searchTransactionURL, request)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &searchTransactionResponseJSON{}
+
+	err = b.sendRequestToAPI(r, resp)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != "0000" {
+		return nil, gatewayError{
+			StatusCode:    resp.StatusCode,
+			StatusMessage: resp.StatusMessage,
+		}
+	}
+
+	return &resp.SearchTransactionResponse, nil
+}
+
+// grantToken gets Token
+func (b *Bkash) grantToken() (*Token, error) {
 	var data = make(map[string]string)
 
-	data["app_key"] = appKey
-	data["app_secret"] = appSecret
+	data["app_key"] = b.appKey
+	data["app_secret"] = b.appSecret
 
-	var storeUrl string
-	if isLive {
-		storeUrl = liveGateway
-	} else {
-		storeUrl = sandboxGateway
-	}
+	grantTokenURL := b.getURL(grantTokenUri)
 
-	u, _ := url.ParseRequestURI(storeUrl)
-	u.Path += grantTokenUri
-
-	grantTokenURL := u.String()
-
-	jsonData, err := json.Marshal(data)
+	r, err := newHttpRequest("POST", grantTokenURL, data)
 	if err != nil {
 		return nil, err
 	}
 
-	client := &http.Client{}
-	r, err := http.NewRequest("POST", grantTokenURL, bytes.NewReader(jsonData))
-	if err != nil {
-		return nil, err
-	}
+	// set extra headers - those are outside the scope of newHttpRequest function
+	r.Header.Add("username", b.username)
+	r.Header.Add("password", b.password)
 
-	r.Header.Add("Content-Type", "application/json")
-	r.Header.Add("Content-Length", strconv.Itoa(len(jsonData)))
-	r.Header.Add("username", username)
-	r.Header.Add("password", password)
+	tj := &tokenJSON{}
 
-	response, err := client.Do(r)
-	if err != nil {
-		return nil, err
-	}
-
-	body, err := ioutil.ReadAll(response.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var tj tokenJSON
-	err = json.Unmarshal(body, &tj)
+	err = b.sendRequestToAPI(r, tj)
 	if err != nil {
 		return nil, err
 	}
@@ -134,65 +338,31 @@ func grantToken(username, password, appKey, appSecret string, isLive bool) (*Tok
 	}, nil
 }
 
-func (b *Bkash) getToken() (*Token, error) {
-	if !b.token.Valid() {
-		if err := b.refreshToken(); err != nil {
-			return nil, err
-		}
-	}
-
-	return b.token, nil
-}
-
+// refreshToken refreshes Bkash.token. It should be concurrency safe.
 func (b *Bkash) refreshToken() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	var data = make(map[string]string)
 
-	data["app_key"] = b.AppKey
-	data["app_secret"] = b.AppSecret
+	data["app_key"] = b.appKey
+	data["app_secret"] = b.appSecret
 	data["refresh_token"] = b.token.RefreshToken
 
-	var storeUrl string
-	if b.isLive {
-		storeUrl = liveGateway
-	} else {
-		storeUrl = sandboxGateway
-	}
-	u, _ := url.ParseRequestURI(storeUrl)
-	u.Path += refreshTokenUri
+	refreshTokenURL := b.getURL(refreshTokenUri)
 
-	refreshTokenURL := u.String()
-
-	jsonData, err := json.Marshal(data)
+	r, err := newHttpRequest("POST", refreshTokenURL, data)
 	if err != nil {
 		return err
 	}
 
-	client := &http.Client{}
-	r, err := http.NewRequest("POST", refreshTokenURL, bytes.NewReader(jsonData))
-	if err != nil {
-		return err
-	}
+	// set extra headers - those are outside the scope of newHttpRequest function
+	r.Header.Add("username", b.username)
+	r.Header.Add("password", b.password)
 
-	r.Header.Add("Content-Type", "application/json")
-	r.Header.Add("Content-Length", strconv.Itoa(len(jsonData)))
-	r.Header.Add("username", b.Username)
-	r.Header.Add("password", b.Password)
+	tj := &tokenJSON{}
 
-	response, err := client.Do(r)
-	if err != nil {
-		return err
-	}
-
-	body, err := ioutil.ReadAll(response.Body)
-	if err != nil {
-		return err
-	}
-
-	var tj tokenJSON
-	err = json.Unmarshal(body, &tj)
+	err = b.sendRequestToAPI(r, tj)
 	if err != nil {
 		return err
 	}
@@ -215,12 +385,21 @@ func (b *Bkash) refreshToken() error {
 	return nil
 }
 
-func (b *Bkash) CreateAgreement(request *CreateAgreementRequest) (*CreateAgreementResponse, error) {
-	// Mode validation
-	if request.Mode != "0000" {
-		return nil, errors.New("invalid mode value")
+// getToken returns Bkash.token - it refreshes automatically if the token being expired.
+// getToken should be concurrency safe.
+func (b *Bkash) getToken() (*Token, error) {
+	if !b.token.Valid() {
+		if err := b.refreshToken(); err != nil {
+			return nil, err
+		}
 	}
 
+	return b.token, nil
+}
+
+// getURL takes path and returns a full URL string by concatenating path with gateway url.
+// If Config.IsLive is true then liveGateway URL is being used, sandboxGateway URL is being used otherwise.
+func (b *Bkash) getURL(path string) string {
 	var storeUrl string
 	if b.isLive {
 		storeUrl = liveGateway
@@ -228,17 +407,16 @@ func (b *Bkash) CreateAgreement(request *CreateAgreementRequest) (*CreateAgreeme
 		storeUrl = sandboxGateway
 	}
 	u, _ := url.ParseRequestURI(storeUrl)
-	u.Path += createAgreementUri
+	u.Path += path
 
-	createAgreementURL := u.String()
+	return u.String()
+}
 
-	jsonData, err := json.Marshal(request)
-	if err != nil {
-		return nil, err
-	}
-
-	client := &http.Client{}
-	r, err := http.NewRequest("POST", createAgreementURL, bytes.NewReader(jsonData))
+// newHttpRequestWithAuthorization creates a http.Request with Authorization and X-App-key header & payload as Body.
+//
+// It calls getToken internally to obtain Authorization token.
+func (b *Bkash) newHttpRequestWithAuthorization(method string, url string, payload interface{}) (*http.Request, error) {
+	req, err := newHttpRequest(method, url, payload)
 	if err != nil {
 		return nil, err
 	}
@@ -248,463 +426,96 @@ func (b *Bkash) CreateAgreement(request *CreateAgreementRequest) (*CreateAgreeme
 		return nil, err
 	}
 
-	r.Header.Add("Content-Type", "application/json")
-	r.Header.Add("Content-Length", strconv.Itoa(len(jsonData)))
-	r.Header.Add("Authorization", fmt.Sprintf("%s %s", tkn.TokenType, tkn.IdToken))
-	r.Header.Add("X-APP-Key", b.AppKey)
+	req.Header.Add("Authorization", fmt.Sprintf("%s %s", tkn.TokenType, tkn.IdToken))
+	req.Header.Add("X-APP-Key", b.appKey)
 
-	response, err := client.Do(r)
+	return req, nil
+}
+
+// sendRequestToAPI makes a request to the API, the response body will be unmarshalled into v.
+// If timeout happens on client end ErrorTimeout returned as error. If http status code is not
+// between 200 & 299 returns a HttpError.
+//
+// Other form of error can happen during ioutil.ReadAll or during json.Unmarshal function calls.
+func (b *Bkash) sendRequestToAPI(req *http.Request, v interface{}) error {
+	// Copy the request body before making the Do() call. This is because client.Do() will close the request.Body
+	// and it's not possible to retrieve the body for further logging
+	requestBodyBytes, _ := ioutil.ReadAll(req.Body)
+	_ = req.Body.Close() // must close
+	req.Body = ioutil.NopCloser(bytes.NewBuffer(requestBodyBytes))
+
+	resp, err := b.httpClient.Do(req)
+	b.log(req, requestBodyBytes, resp)
+
 	if err != nil {
-		return nil, err
-	}
-
-	body, err := ioutil.ReadAll(response.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp CreateAgreementResponse
-	err = json.Unmarshal(body, &resp)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode != "0000" {
-		return nil, gatewayError{
-			StatusCode:    resp.StatusCode,
-			StatusMessage: resp.StatusMessage,
+		if isClientTimeoutError(err) {
+			return ErrorTimeout
 		}
-	}
-
-	return &resp, nil
-}
-
-// Deprecated: CreateAgreementValidationListener id deprecated, and should not be used.
-// Future release will drop the func.
-func (b *Bkash) CreateAgreementValidationListener(r *http.Request) (*CreateAgreementValidationResponse, error) {
-	if r.Method != "POST" {
-		return nil, errors.New("method not allowed")
-	}
-
-	var agreementTValidationResponse CreateAgreementValidationResponse
-
-	err := json.NewDecoder(r.Body).Decode(&agreementTValidationResponse)
-	if err != nil {
-		return nil, err
-	}
-
-	return &agreementTValidationResponse, nil
-}
-
-func (b *Bkash) ExecuteAgreement(request *ExecuteAgreementRequest) (*ExecuteAgreementResponse, error) {
-	var storeUrl string
-	if b.isLive {
-		storeUrl = liveGateway
-	} else {
-		storeUrl = sandboxGateway
-	}
-	u, _ := url.ParseRequestURI(storeUrl)
-	u.Path += executeAgreementUri
-	//u.RawQuery = data.Encode()
-
-	executeAgreementURL := u.String()
-
-	jsonData, err := json.Marshal(request)
-	if err != nil {
-		return nil, err
-	}
-
-	client := &http.Client{}
-	r, err := http.NewRequest("POST", executeAgreementURL, bytes.NewReader(jsonData))
-	if err != nil {
-		return nil, err
-	}
-
-	tkn, err := b.getToken()
-	if err != nil {
-		return nil, err
-	}
-
-	r.Header.Add("Content-Type", "application/json")
-	r.Header.Add("Content-Length", strconv.Itoa(len(jsonData)))
-	r.Header.Add("Authorization", fmt.Sprintf("%s %s", tkn.TokenType, tkn.IdToken))
-	r.Header.Add("X-APP-Key", b.AppKey)
-
-	response, err := client.Do(r)
-	if err != nil {
-		return nil, err
-	}
-
-	body, err := ioutil.ReadAll(response.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp ExecuteAgreementResponse
-	err = json.Unmarshal(body, &resp)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode != "0000" {
-		return nil, gatewayError{
-			StatusCode:    resp.StatusCode,
-			StatusMessage: resp.StatusMessage,
-		}
-	}
-
-	return &resp, nil
-}
-
-func (b *Bkash) QueryAgreement(request *QueryAgreementRequest) (*QueryAgreementResponse, error) {
-	var storeUrl string
-	if b.isLive {
-		storeUrl = liveGateway
-	} else {
-		storeUrl = sandboxGateway
-	}
-	u, _ := url.ParseRequestURI(storeUrl)
-	u.Path += queryAgreementUri
-	//u.RawQuery = data.Encode()
-
-	queryAgreementURL := u.String()
-
-	jsonData, err := json.Marshal(request)
-	if err != nil {
-		return nil, err
-	}
-
-	client := &http.Client{}
-	r, err := http.NewRequest("POST", queryAgreementURL, bytes.NewReader(jsonData))
-	if err != nil {
-		return nil, err
-	}
-
-	tkn, err := b.getToken()
-	if err != nil {
-		return nil, err
-	}
-
-	r.Header.Add("Content-Type", "application/json")
-	r.Header.Add("Content-Length", strconv.Itoa(len(jsonData)))
-	r.Header.Add("Authorization", fmt.Sprintf("%s %s", tkn.TokenType, tkn.IdToken))
-	r.Header.Add("X-APP-Key", b.AppKey)
-
-	response, err := client.Do(r)
-	if err != nil {
-		return nil, err
-	}
-
-	body, err := ioutil.ReadAll(response.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp QueryAgreementResponse
-	err = json.Unmarshal(body, &resp)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode != "0000" {
-		return nil, gatewayError{
-			StatusCode:    resp.StatusCode,
-			StatusMessage: resp.StatusMessage,
-		}
-	}
-
-	return &resp, nil
-}
-
-func (b *Bkash) CancelAgreement(request *CancelAgreementRequest) (*CancelAgreementResponse, error) {
-	var storeUrl string
-	if b.isLive {
-		storeUrl = liveGateway
-	} else {
-		storeUrl = sandboxGateway
-	}
-	u, _ := url.ParseRequestURI(storeUrl)
-	u.Path += cancelAgreementUri
-	//u.RawQuery = data.Encode()
-
-	cancelAgreementURL := u.String()
-
-	jsonData, err := json.Marshal(request)
-	if err != nil {
-		return nil, err
-	}
-
-	client := &http.Client{}
-	r, err := http.NewRequest("POST", cancelAgreementURL, bytes.NewReader(jsonData))
-	if err != nil {
-		return nil, err
-	}
-
-	tkn, err := b.getToken()
-	if err != nil {
-		return nil, err
-	}
-
-	r.Header.Add("Content-Type", "application/json")
-	r.Header.Add("Content-Length", strconv.Itoa(len(jsonData)))
-	r.Header.Add("Authorization", fmt.Sprintf("%s %s", tkn.TokenType, tkn.IdToken))
-	r.Header.Add("X-APP-Key", b.AppKey)
-
-	response, err := client.Do(r)
-	if err != nil {
-		return nil, err
-	}
-
-	body, err := ioutil.ReadAll(response.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp CancelAgreementResponse
-	err = json.Unmarshal(body, &resp)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode != "0000" {
-		return nil, gatewayError{
-			StatusCode:    resp.StatusCode,
-			StatusMessage: resp.StatusMessage,
-		}
-	}
-
-	return &resp, nil
-}
-
-func (b *Bkash) CreatePayment(request *CreatePaymentRequest) (*CreatePaymentResponse, error) {
-	// Mode validation
-	if request.Mode != "0001" {
-		return nil, errors.New("invalid mode value")
-	}
-
-	var storeUrl string
-	if b.isLive {
-		storeUrl = liveGateway
-	} else {
-		storeUrl = sandboxGateway
-	}
-	u, _ := url.ParseRequestURI(storeUrl)
-	u.Path += createPaymentUri
-
-	createPaymentURL := u.String()
-
-	jsonData, err := json.Marshal(request)
-	if err != nil {
-		return nil, err
-	}
-
-	client := &http.Client{}
-	r, err := http.NewRequest("POST", createPaymentURL, bytes.NewReader(jsonData))
-	if err != nil {
-		return nil, err
-	}
-
-	tkn, err := b.getToken()
-	if err != nil {
-		return nil, err
-	}
-
-	r.Header.Add("Content-Type", "application/json")
-	r.Header.Add("Content-Length", strconv.Itoa(len(jsonData)))
-	r.Header.Add("Authorization", fmt.Sprintf("%s %s", tkn.TokenType, tkn.IdToken))
-	r.Header.Add("X-APP-Key", b.AppKey)
-
-	response, err := client.Do(r)
-	if err != nil {
-		return nil, err
-	}
-
-	body, err := ioutil.ReadAll(response.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp CreatePaymentResponse
-	err = json.Unmarshal(body, &resp)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode != "0000" {
-		return nil, gatewayError{
-			StatusCode:    resp.StatusCode,
-			StatusMessage: resp.StatusMessage,
-		}
-	}
-
-	return &resp, nil
-}
-
-func (b *Bkash) ExecutePayment(request *ExecutePaymentRequest) (*ExecutePaymentResponse, error) {
-	var storeUrl string
-	if b.isLive {
-		storeUrl = liveGateway
-	} else {
-		storeUrl = sandboxGateway
-	}
-	u, _ := url.ParseRequestURI(storeUrl)
-	u.Path += executePaymentUri
-
-	executePayment := u.String()
-
-	jsonData, err := json.Marshal(request)
-	if err != nil {
-		return nil, err
-	}
-
-	client := &http.Client{}
-	r, err := http.NewRequest("POST", executePayment, bytes.NewReader(jsonData))
-	if err != nil {
-		return nil, err
-	}
-
-	tkn, err := b.getToken()
-	if err != nil {
-		return nil, err
-	}
-
-	r.Header.Add("Content-Type", "application/json")
-	r.Header.Add("Content-Length", strconv.Itoa(len(jsonData)))
-	r.Header.Add("Authorization", fmt.Sprintf("%s %s", tkn.TokenType, tkn.IdToken))
-	r.Header.Add("X-APP-Key", b.AppKey)
-
-	response, err := client.Do(r)
-	if err != nil {
-		return nil, err
-	}
-
-	body, err := ioutil.ReadAll(response.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp ExecutePaymentResponse
-	err = json.Unmarshal(body, &resp)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode != "0000" {
-		return nil, gatewayError{
-			StatusCode:    resp.StatusCode,
-			StatusMessage: resp.StatusMessage,
-		}
-	}
-
-	return &resp, nil
-}
-
-func (b *Bkash) QueryPayment(request *QueryPaymentRequest) (*QueryPaymentResponse, error) {
-	var storeUrl string
-	if b.isLive {
-		storeUrl = liveGateway
-	} else {
-		storeUrl = sandboxGateway
-	}
-	u, _ := url.ParseRequestURI(storeUrl)
-	u.Path += queryPaymentUri
-	//u.RawQuery = data.Encode()
-
-	queryPaymentURL := u.String()
-
-	jsonData, err := json.Marshal(request)
-	if err != nil {
-		return nil, err
-	}
-
-	client := &http.Client{}
-	r, err := http.NewRequest("POST", queryPaymentURL, bytes.NewReader(jsonData))
-	if err != nil {
-		return nil, err
-	}
-
-	tkn, err := b.getToken()
-	if err != nil {
-		return nil, err
-	}
-
-	r.Header.Add("Content-Type", "application/json")
-	r.Header.Add("Content-Length", strconv.Itoa(len(jsonData)))
-	r.Header.Add("Authorization", fmt.Sprintf("%s %s", tkn.TokenType, tkn.IdToken))
-	r.Header.Add("X-APP-Key", b.AppKey)
-
-	response, err := client.Do(r)
-	if err != nil {
-		return nil, err
-	}
-
-	body, err := ioutil.ReadAll(response.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp QueryPaymentResponse
-	err = json.Unmarshal(body, &resp)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode != "0000" {
-		return nil, gatewayError{
-			StatusCode:    resp.StatusCode,
-			StatusMessage: resp.StatusMessage,
-		}
-	}
-
-	return &resp, nil
-}
-
-// getMessageBytesToSign returns a byte array containing a signature usable for signature verification
-func getMessageBytesToSign(msg *BkashIPNPayload) []byte {
-	var builtSignature bytes.Buffer
-	signableKeys := []string{"Message", "MessageId", "Subject", "SubscribeURL", "Timestamp", "Token", "TopicArn", "Type"}
-	for _, key := range signableKeys {
-		reflectedStruct := reflect.ValueOf(msg)
-		field := reflect.Indirect(reflectedStruct).FieldByName(key)
-		value := field.String()
-		if field.IsValid() && value != "" {
-			builtSignature.WriteString(key + "\n")
-			builtSignature.WriteString(value + "\n")
-		}
-	}
-	return builtSignature.Bytes()
-}
-
-// IsMessageSignatureValid validates bkash IPN message signature. Returns true, nil if ok,
-// otherwise returns false, error
-func IsMessageSignatureValid(msg *BkashIPNPayload) error {
-	resp, err := http.Get(msg.SigningCertURL)
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return errors.New("unable to get certificate err: " + resp.Status)
-	}
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
 		return err
 	}
 
-	p, _ := pem.Decode(body)
-	cert, err := x509.ParseCertificate(p.Bytes)
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		httpErr := &httpError{Response: resp}
+		data, err := ioutil.ReadAll(resp.Body)
+
+		if err == nil && len(data) > 0 {
+			json.Unmarshal(data, httpErr)
+		}
+
+		return httpErr
+	}
+
+	return json.NewDecoder(resp.Body).Decode(v)
+}
+
+// log http.Request and http.Response if Config.Logger specified
+func (b *Bkash) log(request *http.Request, requestBodyBytes []byte, response *http.Response) {
+	if b.logger == nil {
+		return
+	}
+
+	responseBodyBytes, _ := ioutil.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response.Body = ioutil.NopCloser(bytes.NewBuffer(responseBodyBytes))
+
+	var rsp = make(map[string]interface{})
+	_ = json.Unmarshal(responseBodyBytes, &rsp)
+
+	var rq = make(map[string]interface{})
+	_ = json.Unmarshal(requestBodyBytes, &rq)
+
+	fields := logrus.Fields{
+		"url": request.URL.String(),
+		"request_body": logrus.Fields{
+			"method":      request.Method,
+			"body_params": rq,
+			"headers":     request.Header,
+		},
+		"api_response": rsp,
+	}
+
+	b.logger.WithFields(fields).Info()
+}
+
+// newHttpRequest creates a http.Request with payload as Body.
+func newHttpRequest(method string, url string, payload interface{}) (*http.Request, error) {
+	var buf io.Reader
+	if payload != nil {
+		p, err := json.Marshal(&payload)
+		if err != nil {
+			return nil, err
+		}
+		buf = bytes.NewBuffer(p)
+	}
+
+	req, err := http.NewRequest(method, url, buf)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	base64DecodedSignature, err := base64.StdEncoding.DecodeString(msg.Signature)
-	if err != nil {
-		return err
-	}
+	req.Header.Add("Content-Type", "application/json")
 
-	if err := cert.CheckSignature(x509.SHA1WithRSA, getMessageBytesToSign(msg), base64DecodedSignature); err != nil {
-		return err
-	}
-
-	return nil
+	return req, nil
 }

@@ -1,67 +1,65 @@
 package bkash
 
 import (
+	"fmt"
+	"github.com/sirupsen/logrus"
 	"testing"
 )
 
+var (
+	username  = "sandboxTokenizedUser01"
+	password  = "sandboxTokenizedUser12345"
+	appKey    = "7epj60ddf7id0chhcm3vkejtab"
+	appSecret = "18mvi27h9l38dtdv110rq5g603blk0fhh5hg46gfb27cp2rbs66f"
+
+	//username := os.Getenv("USERNAME")
+	//password := os.Getenv("PASSWORD")
+	//appKey := os.Getenv("APP_KEY")
+	//appSecret := os.Getenv("APP_SECRET")
+)
+
 func TestBkash(t *testing.T) {
-	username := "sandboxTokenizedUser01"
-	password := "sandboxTokenizedUser12345"
-	appKey := "7epj60ddf7id0chhcm3vkejtab"
-	appSecret := "18mvi27h9l38dtdv110rq5g603blk0fhh5hg46gfb27cp2rbs66f"
+	logger := logrus.New()
+	logger.SetFormatter(&logrus.JSONFormatter{PrettyPrint: true})
 
-	t.Run("should_produce_no_error", func(t *testing.T) {
-		_, err := GetBkash(username, password, appKey, appSecret, false)
-		if err != nil {
-			t.Fatal("Expected no error, got err: ", err)
-		}
+	bkash, err := GetBkashTokenizedCheckoutService(&Config{
+		Username:   username,
+		Password:   password,
+		AppKey:     appKey,
+		AppSecret:  appSecret,
+		HttpClient: nil,
+		Logger:     logger,
+		IsLive:     false,
 	})
+	if err != nil {
+		t.Fatal("Expected no error, got err: ", err)
+	}
 
-	t.Run("should_produce_error", func(t *testing.T) {
-		_, err := GetBkash(username, password, appKey, "", false)
-		if err == nil {
-			t.Fatal("Expected error, got no error")
-		}
-
-		if _, ok := err.(GatewayError); !ok {
-			t.Fatalf("expected error to be of type GatewayError, got of type: %v", err)
-		}
-	})
-
-	t.Run("should_refresh_token", func(t *testing.T) {
-		bkash, err := GetBkash(username, password, appKey, appSecret, false)
-		if err != nil {
-			t.Fatal("Expected no error, got err: ", err)
-		}
-
-		if b, ok := bkash.(*Bkash); ok {
-			err := b.refreshToken()
-			if err != nil {
-				t.Fatal("Expected no error, got err: ", err)
-			}
-		} else {
-			t.Fatal("type assertion failed")
-		}
-
-		t.Run("should_get_token", func(t *testing.T) {
-			bkash, err := GetBkash(username, password, appKey, appSecret, false)
-			if err != nil {
-				t.Fatal("Expected no error, got err: ", err)
-			}
-
-			if b, ok := bkash.(*Bkash); ok {
-				tkn, err := b.getToken()
-				if err != nil {
-					t.Fatal("Expected no error, got err: ", err)
-				}
-
-				if tkn.TokenType == "" {
-					t.Fatal("Expected string, got empty")
-				}
-			} else {
-				t.Fatal("type assertion failed")
-			}
+	t.Run("create_agreement", func(t *testing.T) {
+		createAgreementResponse, err := bkash.CreateAgreement(&CreateAgreementRequest{
+			Mode:                  "0000",
+			PayerReference:        "01537161343",
+			CallbackUrl:           "http://mydomain.com/bkash",
+			Amount:                "",
+			Currency:              "",
+			Intent:                "",
+			MerchantInvoiceNumber: "",
 		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if createAgreementResponse.PaymentID == "" || createAgreementResponse.BkashURL == "" {
+			t.Fatal("invalid create agreement response")
+		}
 	})
 
+	t.Run("execute_agreement", func(t *testing.T) {
+		executeAgreementResponse, err := bkash.ExecuteAgreement(&ExecuteAgreementRequest{PaymentID: "TR00007X1631515655460"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		fmt.Println(executeAgreementResponse)
+	})
 }
